@@ -10,6 +10,7 @@ library(DBI)
 library(glue)
 library(stringr)
 library(ggplot2)
+library(tidyr)
 con <- dbConnect(duckdb::duckdb(), ":memory:")
 ```
 
@@ -43,10 +44,6 @@ for (file in files){
 ```{sql, connection = con}
 show tables
 ```
-```{sql, connection = con}
-describe product_categories
-
-```
 
 ```{sql, connection = con}
 create or replace view vw_sales as (select * from 
@@ -57,9 +54,6 @@ UNION
 select * from sales_2017));
 ```
 
-```{sql, connection = con}
-describe vw_sales
-```
 
 ```{sql, connection = con}
 select concat(year(orderdate), '-', month(orderdate)) as year_mon, count(*) from vw_sales
@@ -142,7 +136,7 @@ sales_data$year_mon <- as.Date(paste0(sales_data$year_mon, "-01"), format = "%Y-
 # Group by year_mon and productname, then calculate the rank of each product by salesamount
 # Create the line plot
 
-ggplot(sales_data, aes(x = year_mon, y = salesamount, color = productname, group = productname)) +
+ggplot(sales_data, aes(x = year_mon, y = salesamount, group = pr)) +
   geom_line() +
   labs(title = "Top 10 Products by Sales Amount Each Month",
        x = "Month",
@@ -160,7 +154,7 @@ sales$year_mon <- as.Date(paste0(sales$year_mon, "-01"), format="%Y-%m-%d")
 ggplot(sales, aes(x = year_mon, y = salesamount)) +
   geom_line(color = "blue") +
   geom_point(color = "red") +
-  labs(title = "Sales Amount Over Time",
+  labs(title = "Total Sales Amount Over Time",
        x = "Year-Month",
        y = "Sales Amount") +
   theme_minimal()
@@ -233,7 +227,7 @@ order by 5 desc limit 10;
 
 ```{r}
 # Create bar chart
-ggplot(categories, aes(x = reorder(subcategoryname, Bikes), y = Bikes, fill = salesyear)) +
+ggplot(categories, aes(x = reorder(subcategoryname, Bikes), y = Bikes)) +
   geom_col() +
   coord_flip() +
   labs(x = "Category", y = "Total Sales", fill = "Year") +
@@ -262,7 +256,7 @@ ggplot(sales_year, aes(x = salesyear, y = total_sales, fill = categoryname)) +
   theme_minimal()
 
 ```
-
+This graph is built upon the above SQL query and is depicting the amount of total sales per year by each product category. Denoted in green it can be seen that Bikes is the highest selling product category by far compared to Accessories and Clothing. 
 
 ```{sql, connection = con}
 SELECT pc.categoryname, 
@@ -273,9 +267,6 @@ JOIN product_subcategories as ps ON ps.productsubcategorykey = p.productsubcateg
 JOIN product_categories as pc ON pc.productcategorykey = ps.productcategorykey
 GROUP BY pc.categoryname
 ORDER BY avg_order_quantity DESC;
-```
-```{sql, connection = con}
-select * from customers
 ```
 
 ```{sql, connection = con}
@@ -313,14 +304,6 @@ GROUP BY pc.categoryname
 ORDER BY pc.categoryname
 ```
 
-```{r}
-library(tidyr)
-# Transform the data to long format
-data_long <- pivot_longer(sales_year, cols = starts_with("sales_"), names_to = "year", values_to = "sales")
-
-# Clean the year column
-data_long$year <- gsub("sales_", "", data_long$year)
-```
 
 ```{sql, connection = con, output.var = 'avg_cat'}
 SELECT pc.categoryname,
@@ -350,19 +333,6 @@ ggplot(avg_cat, aes(x = categoryname)) +
   theme_minimal()
 
 ```
-
-```{r}
-# Create a bar plot comparing sales for 2016 and 2017
-ggplot(cat_name, aes(x = categoryname)) +
-  geom_bar(aes(y = sales_2016, fill = "2016"), stat = "identity", position = "dodge") +
-  geom_bar(aes(y = sales_2017, fill = "2017"), stat = "identity", position = "dodge") +
-  labs(title = "Sales Comparison by Category",
-       x = "Product Category",
-       y = "Sales Amount",
-       fill = "Year") +
-  theme_minimal()
-```
-
 
 ```{sql, connection = con, output.var = 'growth'}
 WITH MonthlySales AS (
@@ -418,8 +388,6 @@ ORDER BY
     salesyear, 
     salesmonth, 
     rank;
-
-
 ```
 
 ```{r}
