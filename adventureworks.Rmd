@@ -1,0 +1,440 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+
+```{r}
+library(duckdb)
+library(DBI)
+library(glue)
+library(stringr)
+library(ggplot2)
+con <- dbConnect(duckdb::duckdb(), ":memory:")
+```
+
+
+```{sql, connection = con}
+CREATE OR REPLACE TABLE products AS FROM 'AdventureWorks_Products.csv';
+```
+
+```{r}
+files <- list.files(pattern = 'csv')
+```
+
+
+```{r}
+load_table <- function(file){
+  table <- str_remove(file, 'AdventureWorks_')
+  table <- str_remove(table, '.csv')
+  table <- tolower(table)
+  query <- glue_sql("CREATE OR REPLACE TABLE {table} AS FROM read_csv({file}, normalize_names=1);", .con = con)
+DBI::dbExecute(conn = con, statement = query)
+  }
+
+```
+
+```{r}
+for (file in files){
+  load_table(file) }
+
+```
+
+```{sql, connection = con}
+show tables
+```
+```{sql, connection = con}
+describe product_categories
+
+```
+
+```{sql, connection = con}
+create or replace view vw_sales as (select * from 
+(select * from sales_2015
+UNION 
+select * from sales_2016
+UNION
+select * from sales_2017));
+```
+
+```{sql, connection = con}
+describe vw_sales
+```
+
+```{sql, connection = con}
+select concat(year(orderdate), '-', month(orderdate)) as year_mon, count(*) from vw_sales
+group by month(orderdate), year(orderdate);
+```
+```{sql, connection = con}
+select concat(year(orderdate), '-', month(orderdate)) as year_mon, count(*) from vw_sales
+group by month(orderdate), year(orderdate);
+```
+
+
+```{sql, connection = con}
+select concat(year(orderdate), '-', month(orderdate)) as year_mon, count(*) from vw_sales
+group by month(orderdate), year(orderdate);
+```
+
+```{sql, connection = con, output.var = 'sales'}
+select sum(p.productprice * s.orderquantity) as salesamount, concat(year(s.orderdate), '-', month(s.orderdate)) as year_mon
+from vw_sales as s
+join products as p on p.productkey = s.productkey
+group by month(s.orderdate), year(s.orderdate);
+```
+
+```{sql, connection = con, output.var = 'sales_data'}
+WITH MonthlySales AS (
+    SELECT 
+        p.productname, 
+        SUM(p.productprice * s.orderquantity) AS salesamount, 
+        YEAR(s.orderdate) AS salesyear,
+        MONTH(s.orderdate) AS salesmonth
+    FROM 
+        vw_sales AS s
+    JOIN 
+        products AS p ON p.productkey = s.productkey
+    GROUP BY 
+        p.productname, 
+        YEAR(s.orderdate), 
+        MONTH(s.orderdate)
+),
+RankedSales AS (
+    SELECT 
+        productname, 
+        salesamount, 
+        salesyear, 
+        salesmonth,
+        ROW_NUMBER() OVER (PARTITION BY salesyear, salesmonth ORDER BY salesamount DESC) AS rank
+    FROM 
+        MonthlySales
+)
+SELECT 
+    productname, 
+    salesamount, 
+    CONCAT(salesyear, '-', salesmonth) AS year_mon
+FROM 
+    RankedSales
+WHERE 
+    rank <= 3
+ORDER BY 
+    salesyear, 
+    salesmonth, 
+    rank;;
+```
+
+```{r}
+# Create the line plot
+ggplot(sales_data, aes(x = year_mon, y = salesamount, color = productname, group = productname)) +
+  geom_point() +
+  labs(title = "Top 3 Products by Sales Amount Each Month",
+       x = "Month",
+       y = "Sales Amount",
+       color = "Product Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+sales_data$year_mon <- as.Date(paste0(sales_data$year_mon, "-01"), format = "%Y-%m-%d")
+
+# Group by year_mon and productname, then calculate the rank of each product by salesamount
+# Create the line plot
+
+ggplot(sales_data, aes(x = year_mon, y = salesamount, color = productname, group = productname)) +
+  geom_line() +
+  labs(title = "Top 10 Products by Sales Amount Each Month",
+       x = "Month",
+       y = "Sales Amount",
+       color = "Product Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+sales$year_mon <- as.Date(paste0(sales$year_mon, "-01"), format="%Y-%m-%d")
+
+
+ggplot(sales, aes(x = year_mon, y = salesamount)) +
+  geom_line(color = "blue") +
+  geom_point(color = "red") +
+  labs(title = "Sales Amount Over Time",
+       x = "Year-Month",
+       y = "Sales Amount") +
+  theme_minimal()
+
+```
+
+```{sql, connection = con, output.var = 'prod_data'}
+select p.productname, year(s.orderdate) as salesyear, sum(p.productprice * s.orderquantity) as totalsales, 
+from vw_sales as s
+join products as p on p.productkey = s.productkey
+group by all 
+order by totalsales desc limit 10;
+```
+
+
+```{sql, connection = con, output.var = 'worst_prod_data'}
+select p.productname, year(s.orderdate) as salesyear, sum(p.productprice * s.orderquantity) as totalsales, 
+from vw_sales as s
+join products as p on p.productkey = s.productkey
+group by all 
+order by totalsales asc limit 10;
+```
+
+```{r}
+# Create the ggplot
+ggplot(prod_data, aes(x = reorder(productname, totalsales), y = totalsales, fill = as.factor(salesyear))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  coord_flip() +
+  labs(title = "Top 10 Products by Total Sales",
+       x = "Product Name",
+       y = "Total Sales",
+       fill = "Sales Year") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+```{r}
+# Create the ggplot
+ggplot(worst_prod_data, aes(x = reorder(productname, totalsales), y = totalsales, fill = as.factor(salesyear))) +
+  geom_bar(stat = "identity", position = "dodge") +
+  coord_flip() +
+  labs(title = "Top 10 Least bought Products by Total Sales",
+       x = "Product Name",
+       y = "Total Sales",
+       fill = "Sales Year") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{sql, connection = con}
+pivot(select p.productname, year(s.orderdate) as salesyear, p.productprice,  s.orderquantity 
+from vw_sales as s
+join products as p on p.productkey = s.productkey
+) on salesyear using sum(productprice * orderquantity)
+order by 4 desc limit 10;
+```
+
+```{sql, connection = con,output.var = 'categories'}
+pivot(select p.productname, year(s.orderdate) as salesyear, p.productprice,  s.orderquantity, ps.subcategoryname, pc.categoryname
+from vw_sales as s
+join products as p on p.productkey = s.productkey
+join product_subcategories as ps on ps.productsubcategorykey = p.productsubcategorykey
+join product_categories as pc on pc.productcategorykey = ps.productcategorykey
+) on categoryname using sum(productprice * orderquantity)
+order by 5 desc limit 10;
+```
+
+```{r}
+# Create bar chart
+ggplot(categories, aes(x = reorder(subcategoryname, Bikes), y = Bikes, fill = salesyear)) +
+  geom_col() +
+  coord_flip() +
+  labs(x = "Category", y = "Total Sales", fill = "Year") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+```{sql, connection = con, output.var = 'sales_year'}
+SELECT pc.categoryname, year(s.orderdate) as salesyear, 
+       SUM(p.productprice * s.orderquantity) as total_sales
+FROM vw_sales as s
+JOIN products as p ON p.productkey = s.productkey
+JOIN product_subcategories as ps ON ps.productsubcategorykey = p.productsubcategorykey
+JOIN product_categories as pc ON pc.productcategorykey = ps.productcategorykey
+GROUP BY pc.categoryname, year(s.orderdate)
+ORDER BY total_sales DESC;
+```
+
+```{r}
+ggplot(sales_year, aes(x = salesyear, y = total_sales, fill = categoryname)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Total Sales by Category and Year",
+       x = "Year",
+       y = "Total Sales",
+       fill = "Category") +
+  theme_minimal()
+
+```
+
+
+```{sql, connection = con}
+SELECT pc.categoryname, 
+       AVG(s.orderquantity) as avg_order_quantity
+FROM vw_sales as s
+JOIN products as p ON p.productkey = s.productkey
+JOIN product_subcategories as ps ON ps.productsubcategorykey = p.productsubcategorykey
+JOIN product_categories as pc ON pc.productcategorykey = ps.productcategorykey
+GROUP BY pc.categoryname
+ORDER BY avg_order_quantity DESC;
+```
+```{sql, connection = con}
+select * from customers
+```
+
+```{sql, connection = con}
+SELECT 
+    pc.categoryname, 
+    c.lastname, 
+    max(s.orderquantity) as max_order_quantity
+FROM 
+    vw_sales as s
+JOIN 
+    products as p ON p.productkey = s.productkey
+JOIN 
+    product_subcategories as ps ON ps.productsubcategorykey = p.productsubcategorykey
+JOIN 
+    product_categories as pc ON pc.productcategorykey = ps.productcategorykey
+JOIN 
+    customers as c ON c.customerkey = s.customerkey
+GROUP BY 
+    pc.categoryname, c.lastname
+ORDER BY 
+    max_order_quantity DESC limit 20;
+```
+
+
+```{sql, connection = con, output.var ='sales_cat'}
+SELECT pc.categoryname, 
+        SUM(CASE WHEN year(s.orderdate) = 2015 THEN p.productprice * s.orderquantity ELSE 0 END) as sales_2015,
+       SUM(CASE WHEN year(s.orderdate) = 2016 THEN p.productprice * s.orderquantity ELSE 0 END) as sales_2016,
+       SUM(CASE WHEN year(s.orderdate) = 2017 THEN p.productprice * s.orderquantity ELSE 0 END) as sales_2017
+FROM vw_sales as s
+JOIN products as p ON p.productkey = s.productkey
+JOIN product_subcategories as ps ON ps.productsubcategorykey = p.productsubcategorykey
+JOIN product_categories as pc ON pc.productcategorykey = ps.productcategorykey
+GROUP BY pc.categoryname
+ORDER BY pc.categoryname
+```
+
+```{r}
+library(tidyr)
+# Transform the data to long format
+data_long <- pivot_longer(sales_year, cols = starts_with("sales_"), names_to = "year", values_to = "sales")
+
+# Clean the year column
+data_long$year <- gsub("sales_", "", data_long$year)
+```
+
+```{sql, connection = con, output.var = 'avg_cat'}
+SELECT pc.categoryname,
+      SUM(CASE WHEN YEAR(s.orderdate) = 2015 THEN p.productprice * s.orderquantity ELSE 0 END) AS sales_2015,
+       SUM(CASE WHEN YEAR(s.orderdate) = 2016 THEN p.productprice * s.orderquantity ELSE 0 END) AS sales_2016,
+       SUM(CASE WHEN YEAR(s.orderdate) = 2017 THEN p.productprice * s.orderquantity ELSE 0 END) AS sales_2017,
+       AVG(CASE WHEN YEAR(s.orderdate) = 2015 THEN s.orderquantity ELSE NULL END) AS avg_order_quantity_2015,
+       AVG(CASE WHEN YEAR(s.orderdate) = 2016 THEN s.orderquantity ELSE NULL END) AS avg_order_quantity_2016,
+       AVG(CASE WHEN YEAR(s.orderdate) = 2017 THEN s.orderquantity ELSE NULL END) AS avg_order_quantity_2017
+FROM vw_sales AS s
+JOIN products AS p ON p.productkey = s.productkey
+JOIN product_subcategories AS ps ON ps.productsubcategorykey = p.productsubcategorykey
+JOIN product_categories AS pc ON pc.productcategorykey = ps.productcategorykey
+GROUP BY pc.categoryname
+ORDER BY pc.categoryname;
+```
+
+```{r}
+ggplot(avg_cat, aes(x = categoryname)) +
+  geom_point(aes(y = avg_order_quantity_2015, color = "2015", group = 1)) +
+  geom_point(aes(y = avg_order_quantity_2016, color = "2016", group = 1)) +
+  geom_point(aes(y = avg_order_quantity_2017, color = "2017", group = 1)) +
+  labs(title = "Average Order Quantity by Category",
+       x = "Product Category",
+       y = "Average Order Quantity",
+       color = "Year") +
+  theme_minimal()
+
+```
+
+```{r}
+# Create a bar plot comparing sales for 2016 and 2017
+ggplot(cat_name, aes(x = categoryname)) +
+  geom_bar(aes(y = sales_2016, fill = "2016"), stat = "identity", position = "dodge") +
+  geom_bar(aes(y = sales_2017, fill = "2017"), stat = "identity", position = "dodge") +
+  labs(title = "Sales Comparison by Category",
+       x = "Product Category",
+       y = "Sales Amount",
+       fill = "Year") +
+  theme_minimal()
+```
+
+
+```{sql, connection = con, output.var = 'growth'}
+WITH MonthlySales AS (
+    SELECT 
+        p.productname, 
+        YEAR(s.orderdate) AS salesyear,
+        MONTH(s.orderdate) AS salesmonth,
+        SUM(p.productprice * s.orderquantity) AS salesamount
+    FROM 
+        vw_sales AS s
+    JOIN 
+        products AS p ON p.productkey = s.productkey
+    GROUP BY 
+        p.productname, 
+        YEAR(s.orderdate), 
+        MONTH(s.orderdate)
+),
+MonthlyGrowth AS (
+    SELECT 
+        productname,
+        salesyear,
+        salesmonth,
+        salesamount,
+        LAG(salesamount) OVER (PARTITION BY productname ORDER BY salesyear, salesmonth) AS prev_salesamount,
+        (salesamount - LAG(salesamount) OVER (PARTITION BY productname ORDER BY salesyear, salesmonth)) / NULLIF(LAG(salesamount) OVER (PARTITION BY productname ORDER BY salesyear, salesmonth), 0) * 100 AS growth_rate
+    FROM 
+        MonthlySales
+),
+RankedGrowth AS (
+    SELECT 
+        productname,
+        salesyear,
+        salesmonth,
+        salesamount,
+        growth_rate,
+        ROW_NUMBER() OVER (PARTITION BY salesyear, salesmonth ORDER BY growth_rate DESC) AS rank
+    FROM 
+        MonthlyGrowth
+    WHERE 
+        growth_rate IS NOT NULL
+)
+SELECT 
+    productname, 
+    salesyear, 
+    salesmonth, 
+    salesamount, 
+    growth_rate
+FROM 
+    RankedGrowth
+WHERE 
+    rank <= 2
+ORDER BY 
+    salesyear, 
+    salesmonth, 
+    rank;
+
+
+```
+
+```{r}
+# Convert salesyear and salesmonth to a Date type for better handling
+growth$year_mon <- as.Date(paste0(growth$salesyear, "-", growth$salesmonth, "-01"), format = "%Y-%m-%d")
+
+ggplot(growth, aes(x = year_mon, y = growth_rate, color = as.factor(growth$productname))) +
+  geom_point(size = 3) +
+  labs(title = "Top 5 Products by Sales Growth Rate Each Month",
+       x = "Month",
+       y = "Growth Rate (%)",
+       color = "Year",
+       shape = "Product Name") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
